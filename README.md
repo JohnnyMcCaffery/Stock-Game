@@ -4,6 +4,26 @@ A real-life stock market trading simulator web application built with **React 19
 
 ---
 
+## 💾 Hard Drive Local Storage & Session Persistence
+
+The application includes an **Automated Hard Drive Disk Storage Engine** (`/api/state` endpoint integrated with Vite and Node/Express) to ensure your game progress is never lost:
+
+### How Hard Drive Storage Works
+1. **Local Disk Database File**:
+   - Every buy, sell, cash balance change, portfolio update, and API key configuration is saved directly to a JSON database file on your local computer's hard drive at:
+     ```
+     /home/johnny/Documents/Programming/react/Stocks_Game/data/savegame.json
+     ```
+2. **Immune to Browser Data & Cookie Clears**:
+   - Standard browser `localStorage` can be erased if you click "Clear Browsing Data" or "Clear Cookies".
+   - Our app automatically reads from `data/savegame.json` on startup. Even if you wipe all browser cache/cookies, open in Incognito mode, or switch browsers, your game resumes **EXACTLY where you left off** with zero data loss.
+3. **No Login or Account Needed**:
+   - Because the storage engine runs locally on your computer, no user accounts, passwords, or login forms are required.
+4. **Dual-Layer Persistence**:
+   - Automatically saves to both **Hard Drive Disk Storage** (`data/savegame.json`) and **Browser Storage** (`localStorage`) for maximum reliability and instant load performance.
+
+---
+
 ## 🌐 Live Real-World Data Integration
 
 The application features a **Multi-Source Live Market Data Engine** connecting directly to real-world financial endpoints:
@@ -33,7 +53,7 @@ Follow these simple steps to activate and customize live market data:
    - Finnhub offers a 100% free API key for real-time US stock market quotes.
    - Click **[Get Free Key](https://finnhub.io/register)** to register in 10 seconds.
    - Paste your key into the **Finnhub API Key** field and click **Save & Update Settings**.
-   - *Note: If left blank, CoinGecko live crypto & live FX rates remain active alongside market tick simulation.*
+   - *Note: If left blank, CoinGecko live crypto & live FX rates remain active alongside market tick simulation. Your API key is permanently saved to your disk file (`data/savegame.json`).*
 
 4. **Manual & Automatic Sync**:
    - Click the **Refresh Live Market** button ($\circlearrowleft$) in the navbar at any time to pull fresh live quotes on demand.
@@ -102,5 +122,6 @@ Open your browser and navigate to **`http://localhost:5173/`**.
 - **Framework**: React 18 / 19 + Vite
 - **Language**: TypeScript
 - **Styling**: Vanilla CSS (Fintech Dark Mode with Glassmorphism)
+- **Database / Disk Storage**: Local JSON File Engine (`data/savegame.json` via `/api/state`)
 - **Charts**: Recharts
 - **Icons**: Lucide React
