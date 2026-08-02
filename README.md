@@ -12,7 +12,7 @@ The application includes an **Automated Hard Drive Disk Storage Engine** (`/api/
 1. **Local Disk Database File**:
    - Every buy, sell, cash balance change, portfolio update, and API key configuration is saved directly to a JSON database file on your local computer's hard drive at:
      ```
-     /home/johnny/Documents/Programming/react/Stocks_Game/data/savegame.json
+     data/savegame.json
      ```
 2. **Immune to Browser Data & Cookie Clears**:
    - Standard browser `localStorage` can be erased if you click "Clear Browsing Data" or "Clear Cookies".
@@ -50,7 +50,7 @@ Follow these simple steps to activate and customize live market data:
    - **⚡ Real-Time Ticker Mode**: Simulates continuous price fluctuations every 2.5 seconds (ideal when stock exchanges are closed on weekends/after-hours).
 
 3. **Add Your Free Finnhub API Key (Optional)**:
-   - Finnhub offers a 100% free API key for real-time US stock market quotes.
+   - Finnhub offers a 100% free API key for real-time US stock market quotes
    - Click **[Get Free Key](https://finnhub.io/register)** to register in 10 seconds.
    - Paste your key into the **Finnhub API Key** field and click **Save & Update Settings**.
    - *Note: If left blank, CoinGecko live crypto & live FX rates remain active alongside market tick simulation. Your API key is permanently saved to your disk file (`data/savegame.json`).*
