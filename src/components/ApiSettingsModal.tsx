@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useGame } from '../context/GameContext';
-import { X, Globe, Key, CheckCircle, RefreshCw, ExternalLink, Zap, Edit3 } from 'lucide-react';
+import { X, Globe, Key, CheckCircle, RefreshCw, ExternalLink, Zap, Edit3, HardDrive } from 'lucide-react';
 
 interface ApiSettingsModalProps {
   isOpen: boolean;
@@ -22,6 +22,7 @@ export const ApiSettingsModal: React.FC<ApiSettingsModalProps> = ({ isOpen, onCl
     setAppVersion,
     startingBalance,
     setStartingBalance,
+    isHardDriveSynced,
   } = useGame();
 
   const [inputKey, setInputKey] = useState(apiKey);
@@ -36,7 +37,7 @@ export const ApiSettingsModal: React.FC<ApiSettingsModalProps> = ({ isOpen, onCl
     e.preventDefault();
     setApiKey(inputKey.trim());
     setAppTitle(titleInput.trim() || 'STOCKS GAME');
-    setAppVersion(versionInput.trim() || '1.1.0');
+    setAppVersion(versionInput.trim() || '0.1.0');
     
     const parsedBal = parseFloat(balanceInput);
     if (!isNaN(parsedBal) && parsedBal > 0) {
@@ -64,9 +65,9 @@ export const ApiSettingsModal: React.FC<ApiSettingsModalProps> = ({ isOpen, onCl
               <Globe size={22} color="var(--accent-cyan)" />
             </div>
             <div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800 }}>App Configuration & Settings</h2>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 800 }}>App Configuration & Hard Drive Settings</h2>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                Customize app title, version number, starting capital, and live APIs.
+                Configure real-time stock market data feeds & local disk storage.
               </p>
             </div>
           </div>
@@ -77,7 +78,31 @@ export const ApiSettingsModal: React.FC<ApiSettingsModalProps> = ({ isOpen, onCl
 
         <form onSubmit={handleSave}>
 
-          {/* 1. Editable Page Information Section */}
+          {/* 1. Hard Drive Storage Status */}
+          <div style={{ background: 'rgba(16, 185, 129, 0.08)', borderRadius: '12px', padding: '1rem', border: '1px solid rgba(16, 185, 129, 0.25)', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <HardDrive size={18} color="var(--accent-emerald)" />
+                <div>
+                  <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#ffffff' }}>
+                    Hard Drive Disk Save File
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                    Saved to: <code style={{ color: 'var(--accent-emerald)' }}>data/savegame.json</code>
+                  </div>
+                </div>
+              </div>
+
+              <span className="badge-profit" style={{ fontSize: '0.725rem' }}>
+                {isHardDriveSynced ? '100% DISK SYNCED' : 'READY'}
+              </span>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+              All trades, cash balance, portfolio holdings, and API keys are stored directly on your computer disk. Your game data is 100% immune to browser data/cookie wipes. No login required.
+            </p>
+          </div>
+
+          {/* 2. Editable Page Information Section */}
           <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '12px', padding: '1rem', border: '1px solid var(--border-color)', marginBottom: '1.25rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.75rem' }}>
               <Edit3 size={16} color="var(--accent-emerald)" />
@@ -110,7 +135,7 @@ export const ApiSettingsModal: React.FC<ApiSettingsModalProps> = ({ isOpen, onCl
                   value={versionInput}
                   onChange={(e) => setVersionInput(e.target.value)}
                   className="form-input"
-                  placeholder="e.g. 1.1.0"
+                  placeholder="e.g. 0.1.0"
                   style={{ fontSize: '0.9rem' }}
                 />
               </div>
@@ -133,7 +158,7 @@ export const ApiSettingsModal: React.FC<ApiSettingsModalProps> = ({ isOpen, onCl
             </div>
           </div>
 
-          {/* 2. Status Indicators */}
+          {/* 3. Status Indicators */}
           <div style={{ background: 'rgba(0,0,0,0.4)', borderRadius: '12px', padding: '1rem', border: '1px solid var(--border-color)', marginBottom: '1.25rem' }}>
             <h4 style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '0.75rem', letterSpacing: '0.05em' }}>
               ACTIVE DATA SOURCES & CONNECTIONS
@@ -174,7 +199,7 @@ export const ApiSettingsModal: React.FC<ApiSettingsModalProps> = ({ isOpen, onCl
             </div>
           </div>
 
-          {/* 3. Data Mode Switch */}
+          {/* 4. Data Mode Switch */}
           <div style={{ marginBottom: '1.25rem' }}>
             <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>
               DATA SOURCE ENGINE MODE
@@ -217,7 +242,7 @@ export const ApiSettingsModal: React.FC<ApiSettingsModalProps> = ({ isOpen, onCl
             </div>
           </div>
 
-          {/* 4. API Key Form */}
+          {/* 5. API Key Form */}
           <div style={{ marginBottom: '1.25rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
               <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
@@ -245,7 +270,7 @@ export const ApiSettingsModal: React.FC<ApiSettingsModalProps> = ({ isOpen, onCl
 
           {saveSuccess && (
             <div style={{ background: 'rgba(34, 197, 94, 0.15)', border: '1px solid rgba(34, 197, 94, 0.3)', color: 'var(--profit-green)', padding: '0.6rem 0.8rem', borderRadius: '8px', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
-              <CheckCircle size={16} /> Saved configuration! Updating page data & fetching quotes...
+              <CheckCircle size={16} /> Saved configuration! Saved to disk & fetching quotes...
             </div>
           )}
 

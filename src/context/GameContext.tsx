@@ -5,6 +5,7 @@ import packageJson from '../../package.json';
 
 const DEFAULT_STARTING_BALANCE = 5000.00;
 const LOCAL_STORAGE_KEY = 'stock_game_state_v1';
+const API_KEY_STORAGE_KEY = 'stock_game_api_key_v1';
 
 interface GameContextType {
   stocks: Stock[];
@@ -32,12 +33,28 @@ interface GameContextType {
   setAppVersion: (ver: string) => void;
   startingBalance: number;
   setStartingBalance: (bal: number) => void;
+  isHardDriveSynced: boolean;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
 export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [stocks, setStocks] = useState<Stock[]>(() => INITIAL_STOCKS);
+  // Flag to prevent auto-save from overwriting server data before initial load finishes
+  const [isInitialLoadComplete, setIsInitialLoadComplete] = useState<boolean>(false);
+
+  // Load saved stock prices & market history from LocalStorage as initial fallback
+  const [stocks, setStocks] = useState<Stock[]>(() => {
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed.stocks) && parsed.stocks.length > 0) {
+          return parsed.stocks;
+        }
+      } catch (e) {}
+    }
+    return INITIAL_STOCKS;
+  });
 
   const [appTitle, setAppTitleState] = useState<string>(() => {
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -50,7 +67,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return 'STOCKS GAME';
   });
 
-  // appVersion defaults directly to package.json version
   const [customVersion, setCustomVersion] = useState<string | null>(() => {
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (saved) {
@@ -62,7 +78,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return null;
   });
 
-  const appVersion = customVersion || packageJson.version || '1.1.0';
+  const appVersion = customVersion || packageJson.version || '0.1.0';
 
   const setAppVersion = (ver: string) => {
     setCustomVersion(ver);
@@ -85,9 +101,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (typeof parsed.cashBalance === 'number') return parsed.cashBalance;
-      } catch (e) {
-        console.error('Failed to parse saved state', e);
-      }
+      } catch (e) {}
     }
     return startingBalance;
   });
@@ -98,9 +112,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (parsed.holdingsMap) return parsed.holdingsMap;
-      } catch (e) {
-        console.error('Failed to parse saved holdings', e);
-      }
+      } catch (e) {}
     }
     return {};
   });
@@ -111,22 +123,21 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed.transactions)) return parsed.transactions;
-      } catch (e) {
-        console.error('Failed to parse saved transactions', e);
-      }
+      } catch (e) {}
     }
     return [];
   });
 
   const [apiKey, setApiKey] = useState<string>(() => {
+    const dedicatedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
+    if (dedicatedKey) return dedicatedKey;
+
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (typeof parsed.apiKey === 'string') return parsed.apiKey;
-      } catch (e) {
-        console.error('Failed to parse API key', e);
-      }
+      } catch (e) {}
     }
     return '';
   });
@@ -137,17 +148,45 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (parsed.dataSourceMode === 'LIVE_API' || parsed.dataSourceMode === 'SIMULATED') return parsed.dataSourceMode;
-      } catch (e) {
-        console.error('Failed to parse data mode', e);
-      }
+      } catch (e) {}
     }
     return 'LIVE_API';
   });
 
-  const [selectedStock, setSelectedStock] = useState<Stock | null>(INITIAL_STOCKS[0]);
+  const [selectedStock, setSelectedStock] = useState<Stock | null>(() => stocks[0] || INITIAL_STOCKS[0]);
   const [isLiveMarketActive, setIsLiveMarketActive] = useState<boolean>(true);
   const [isSyncingLiveApi, setIsSyncingLiveApi] = useState<boolean>(false);
   const [lastLiveSyncTime, setLastLiveSyncTime] = useState<string | null>(null);
+  const [isHardDriveSynced, setIsHardDriveSynced] = useState<boolean>(false);
+
+  // Load saved state from Hard Drive File (/api/state -> data/savegame.json) FIRST before enabling auto-save
+  useEffect(() => {
+    async function loadHardDriveSave() {
+      try {
+        const res = await fetch('/api/state');
+        if (res.ok) {
+          const diskData = await res.json();
+          if (diskData && diskData.exists !== false) {
+            setIsHardDriveSynced(true);
+            if (Array.isArray(diskData.stocks) && diskData.stocks.length > 0) setStocks(diskData.stocks);
+            if (typeof diskData.cashBalance === 'number') setCashBalance(diskData.cashBalance);
+            if (diskData.holdingsMap) setHoldingsMap(diskData.holdingsMap);
+            if (Array.isArray(diskData.transactions)) setTransactions(diskData.transactions);
+            if (typeof diskData.apiKey === 'string') setApiKey(diskData.apiKey);
+            if (diskData.dataSourceMode) setDataSourceMode(diskData.dataSourceMode);
+            if (diskData.appTitle) setAppTitleState(diskData.appTitle);
+            if (typeof diskData.startingBalance === 'number') setStartingBalanceState(diskData.startingBalance);
+            if (diskData.customVersion) setCustomVersion(diskData.customVersion);
+          }
+        }
+      } catch (err) {
+        console.warn('Hard drive API save file fetch failed, using local browser fallback', err);
+      } finally {
+        setIsInitialLoadComplete(true);
+      }
+    }
+    loadHardDriveSave();
+  }, []);
 
   // Live market price sync function
   const refreshLiveMarketData = async () => {
@@ -164,7 +203,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Initial live market price fetch on load
+  // Fetch live market prices on initial session boot
   useEffect(() => {
     refreshLiveMarketData();
   }, []);
@@ -196,9 +235,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [stocks, selectedStock]);
 
-  // Auto-save to LocalStorage
+  // Auto-save full session state to BOTH LocalStorage AND Hard Drive File (/data/savegame.json) ONLY AFTER initial load complete!
   useEffect(() => {
+    if (!isInitialLoadComplete) return; // GATE: Prevent overwriting disk file before initial GET finishes!
+
     const stateToSave = {
+      stocks,
       cashBalance,
       holdingsMap,
       transactions,
@@ -207,9 +249,25 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       appTitle,
       customVersion,
       startingBalance,
+      savedAt: new Date().toISOString(),
     };
+
+    // 1. Browser LocalStorage
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stateToSave));
-  }, [cashBalance, holdingsMap, transactions, apiKey, dataSourceMode, appTitle, customVersion, startingBalance]);
+    if (apiKey) {
+      localStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
+    }
+
+    // 2. Hard Drive File Server Endpoint (/api/state -> /data/savegame.json)
+    fetch('/api/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(stateToSave),
+    })
+      .then(() => setIsHardDriveSynced(true))
+      .catch((err) => console.warn('Hard drive save backup failed', err));
+
+  }, [isInitialLoadComplete, stocks, cashBalance, holdingsMap, transactions, apiKey, dataSourceMode, appTitle, customVersion, startingBalance]);
 
   // Compute active holdings list and metrics
   const holdings: Holding[] = Object.entries(holdingsMap)
@@ -379,10 +437,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   };
 
-  // Reset Game
+  // Reset Game while preserving user's API Key & preferences
   const resetGame = (newStartingBal?: number) => {
     const balToUse = typeof newStartingBal === 'number' && newStartingBal > 0 ? newStartingBal : startingBalance;
+    const existingApiKey = apiKey;
+    const existingDataMode = dataSourceMode;
+
     localStorage.removeItem(LOCAL_STORAGE_KEY);
+    fetch('/api/state', { method: 'DELETE' }).catch(() => {});
+
     setCashBalance(balToUse);
     setStartingBalanceState(balToUse);
     setHoldingsMap({});
@@ -390,6 +453,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setStocks(INITIAL_STOCKS);
     setSelectedStock(INITIAL_STOCKS[0]);
     setCustomVersion(null);
+    setApiKey(existingApiKey);
+    setDataSourceMode(existingDataMode);
   };
 
   // Export Transactions Log as CSV file
@@ -451,6 +516,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setAppVersion,
         startingBalance,
         setStartingBalance: setStartingBalanceState,
+        isHardDriveSynced,
       }}
     >
       {children}
