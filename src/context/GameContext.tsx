@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { Stock, Holding, Transaction, PortfolioSummary } from '../types/stock';
-import { INITIAL_STOCKS, simulateMarketTick } from '../services/marketData';
+import { INITIAL_STOCKS, simulateMarketTick, fetchRealTimeMarketData } from '../services/marketData';
+import packageJson from '../../package.json';
 
-const STARTING_BALANCE = 5000.00;
+const DEFAULT_STARTING_BALANCE = 5000.00;
 const LOCAL_STORAGE_KEY = 'stock_game_state_v1';
 
 interface GameContextType {
@@ -14,16 +15,69 @@ interface GameContextType {
   setSelectedStock: (stock: Stock | null) => void;
   buyStock: (stockId: string, amountGBP: number) => { success: boolean; message: string };
   sellStock: (stockId: string, sharesToSell: number) => { success: boolean; message: string };
-  resetGame: () => void;
+  resetGame: (newStartingBalance?: number) => void;
   exportTransactionsCSV: () => void;
   isLiveMarketActive: boolean;
   setIsLiveMarketActive: (active: boolean) => void;
+  apiKey: string;
+  setApiKey: (key: string) => void;
+  dataSourceMode: 'LIVE_API' | 'SIMULATED';
+  setDataSourceMode: (mode: 'LIVE_API' | 'SIMULATED') => void;
+  refreshLiveMarketData: () => Promise<void>;
+  isSyncingLiveApi: boolean;
+  lastLiveSyncTime: string | null;
+  appTitle: string;
+  setAppTitle: (title: string) => void;
+  appVersion: string;
+  setAppVersion: (ver: string) => void;
+  startingBalance: number;
+  setStartingBalance: (bal: number) => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
 export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [stocks, setStocks] = useState<Stock[]>(() => INITIAL_STOCKS);
+
+  const [appTitle, setAppTitleState] = useState<string>(() => {
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.appTitle === 'string') return parsed.appTitle;
+      } catch (e) {}
+    }
+    return 'STOCKS GAME';
+  });
+
+  // appVersion defaults directly to package.json version
+  const [customVersion, setCustomVersion] = useState<string | null>(() => {
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.customVersion === 'string') return parsed.customVersion;
+      } catch (e) {}
+    }
+    return null;
+  });
+
+  const appVersion = customVersion || packageJson.version || '1.1.0';
+
+  const setAppVersion = (ver: string) => {
+    setCustomVersion(ver);
+  };
+
+  const [startingBalance, setStartingBalanceState] = useState<number>(() => {
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.startingBalance === 'number' && parsed.startingBalance > 0) return parsed.startingBalance;
+      } catch (e) {}
+    }
+    return DEFAULT_STARTING_BALANCE;
+  });
 
   const [cashBalance, setCashBalance] = useState<number>(() => {
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -35,7 +89,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('Failed to parse saved state', e);
       }
     }
-    return STARTING_BALANCE;
+    return startingBalance;
   });
 
   const [holdingsMap, setHoldingsMap] = useState<Record<string, { sharesOwned: number; totalCost: number; averageCost: number; realisedPL: number }>>(() => {
@@ -64,19 +118,73 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return [];
   });
 
+  const [apiKey, setApiKey] = useState<string>(() => {
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.apiKey === 'string') return parsed.apiKey;
+      } catch (e) {
+        console.error('Failed to parse API key', e);
+      }
+    }
+    return '';
+  });
+
+  const [dataSourceMode, setDataSourceMode] = useState<'LIVE_API' | 'SIMULATED'>(() => {
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.dataSourceMode === 'LIVE_API' || parsed.dataSourceMode === 'SIMULATED') return parsed.dataSourceMode;
+      } catch (e) {
+        console.error('Failed to parse data mode', e);
+      }
+    }
+    return 'LIVE_API';
+  });
+
   const [selectedStock, setSelectedStock] = useState<Stock | null>(INITIAL_STOCKS[0]);
   const [isLiveMarketActive, setIsLiveMarketActive] = useState<boolean>(true);
+  const [isSyncingLiveApi, setIsSyncingLiveApi] = useState<boolean>(false);
+  const [lastLiveSyncTime, setLastLiveSyncTime] = useState<string | null>(null);
 
-  // Live market price simulation ticker interval
+  // Live market price sync function
+  const refreshLiveMarketData = async () => {
+    setIsSyncingLiveApi(true);
+    try {
+      const res = await fetchRealTimeMarketData(stocks, apiKey);
+      setStocks(res.stocks);
+      const now = new Date();
+      setLastLiveSyncTime(now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    } catch (err) {
+      console.error('Failed live API refresh', err);
+    } finally {
+      setIsSyncingLiveApi(false);
+    }
+  };
+
+  // Initial live market price fetch on load
+  useEffect(() => {
+    refreshLiveMarketData();
+  }, []);
+
+  // Polling interval for market data
   useEffect(() => {
     if (!isLiveMarketActive) return;
 
-    const interval = setInterval(() => {
-      setStocks((prevStocks) => simulateMarketTick(prevStocks));
-    }, 2500);
-
-    return () => clearInterval(interval);
-  }, [isLiveMarketActive]);
+    if (dataSourceMode === 'LIVE_API') {
+      const interval = setInterval(() => {
+        refreshLiveMarketData();
+      }, 15000); // Fetch live API every 15 seconds
+      return () => clearInterval(interval);
+    } else {
+      const interval = setInterval(() => {
+        setStocks((prevStocks) => simulateMarketTick(prevStocks));
+      }, 2500); // Ticker simulation every 2.5 seconds
+      return () => clearInterval(interval);
+    }
+  }, [isLiveMarketActive, dataSourceMode, apiKey]);
 
   // Keep selectedStock state updated with new live prices
   useEffect(() => {
@@ -94,9 +202,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       cashBalance,
       holdingsMap,
       transactions,
+      apiKey,
+      dataSourceMode,
+      appTitle,
+      customVersion,
+      startingBalance,
     };
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stateToSave));
-  }, [cashBalance, holdingsMap, transactions]);
+  }, [cashBalance, holdingsMap, transactions, apiKey, dataSourceMode, appTitle, customVersion, startingBalance]);
 
   // Compute active holdings list and metrics
   const holdings: Holding[] = Object.entries(holdingsMap)
@@ -130,10 +243,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const totalPortfolioValue = cashBalance + totalInvested;
   const totalUnrealisedPL = holdings.reduce((sum, h) => sum + (h.sharesOwned > 0 ? h.unrealisedPL : 0), 0);
   const totalRealisedPL = Object.values(holdingsMap).reduce((sum, h) => sum + h.realisedPL, 0);
-  const totalReturnPercent = ((totalPortfolioValue - STARTING_BALANCE) / STARTING_BALANCE) * 100;
+  const totalReturnPercent = startingBalance > 0 ? ((totalPortfolioValue - startingBalance) / startingBalance) * 100 : 0;
 
   const summary: PortfolioSummary = {
-    startingBalance: STARTING_BALANCE,
+    startingBalance,
     cashBalance,
     totalInvested,
     totalPortfolioValue,
@@ -266,14 +379,17 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   };
 
-  // Reset Game to Initial £5000 State
-  const resetGame = () => {
+  // Reset Game
+  const resetGame = (newStartingBal?: number) => {
+    const balToUse = typeof newStartingBal === 'number' && newStartingBal > 0 ? newStartingBal : startingBalance;
     localStorage.removeItem(LOCAL_STORAGE_KEY);
-    setCashBalance(STARTING_BALANCE);
+    setCashBalance(balToUse);
+    setStartingBalanceState(balToUse);
     setHoldingsMap({});
     setTransactions([]);
     setStocks(INITIAL_STOCKS);
     setSelectedStock(INITIAL_STOCKS[0]);
+    setCustomVersion(null);
   };
 
   // Export Transactions Log as CSV file
@@ -322,6 +438,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         exportTransactionsCSV,
         isLiveMarketActive,
         setIsLiveMarketActive,
+        apiKey,
+        setApiKey,
+        dataSourceMode,
+        setDataSourceMode,
+        refreshLiveMarketData,
+        isSyncingLiveApi,
+        lastLiveSyncTime,
+        appTitle,
+        setAppTitle: setAppTitleState,
+        appVersion,
+        setAppVersion,
+        startingBalance,
+        setStartingBalance: setStartingBalanceState,
       }}
     >
       {children}
