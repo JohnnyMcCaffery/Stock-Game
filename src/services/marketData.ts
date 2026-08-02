@@ -173,6 +173,133 @@ function generateMockHistory(currentPrice: number) {
   return points;
 }
 
+/**
+ * Fetch live USD to GBP exchange rate from Open Exchange Rates / ER-API (CORS-enabled)
+ */
+export async function getLiveUsdToGbpRate(): Promise<number> {
+  try {
+    const res = await fetch('https://open.er-api.com/v6/latest/USD');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.rates && typeof data.rates.GBP === 'number') {
+        return data.rates.GBP;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to fetch live FX rate, using 0.78 fallback rate', err);
+  }
+  return 0.78;
+}
+
+/**
+ * Fetch live Crypto prices from CoinGecko API (No API key needed)
+ */
+export async function fetchLiveCryptoPrices(): Promise<{ btcGbp: number; btcChange: number } | null> {
+  try {
+    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=gbp&include_24hr_change=true');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.bitcoin) {
+        return {
+          btcGbp: data.bitcoin.gbp,
+          btcChange: parseFloat(data.bitcoin.gbp_24h_change?.toFixed(2) || '0'),
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to fetch live CoinGecko crypto data', err);
+  }
+  return null;
+}
+
+/**
+ * Fetch real live stock quotes from Finnhub API or free quote endpoint
+ */
+export async function fetchFinnhubQuote(symbol: string, apiKey: string): Promise<{ priceUSD: number; change24h: number; high: number; low: number; prevClose: number } | null> {
+  try {
+    const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${encodeURIComponent(apiKey)}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && typeof data.c === 'number' && data.c > 0) {
+        return {
+          priceUSD: data.c,
+          change24h: parseFloat(data.dp?.toFixed(2) || '0'),
+          high: data.h || data.c,
+          low: data.l || data.c,
+          prevClose: data.pc || data.c,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn(`Finnhub quote fetch failed for ${symbol}`, err);
+  }
+  return null;
+}
+
+/**
+ * Main Live Data Fetcher service updating stocks with real market data
+ */
+export async function fetchRealTimeMarketData(currentStocks: Stock[], finnhubApiKey?: string): Promise<{ stocks: Stock[]; updatedCount: number; fxRate: number }> {
+  const usdToGbp = await getLiveUsdToGbpRate();
+  const cryptoData = await fetchLiveCryptoPrices();
+  let updatedCount = 0;
+
+  const updatedStocks = await Promise.all(
+    currentStocks.map(async (stock) => {
+      // 1. Crypto updates via CoinGecko
+      if (stock.id === 'BTC-USD' && cryptoData) {
+        updatedCount++;
+        const newPrice = cryptoData.btcGbp;
+        const now = new Date();
+        const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+        return {
+          ...stock,
+          price: newPrice,
+          change24h: cryptoData.btcChange,
+          dayHigh: Math.max(stock.dayHigh, newPrice),
+          dayLow: Math.min(stock.dayLow, newPrice),
+          sparkline: [...stock.sparkline.slice(1), newPrice],
+          history: [...stock.history.slice(1), { time: timeStr, price: newPrice }],
+        };
+      }
+
+      // 2. Stock updates via Finnhub API if user provided an API key
+      if (finnhubApiKey && !stock.id.includes('.L') && stock.id !== 'BTC-USD') {
+        const quote = await fetchFinnhubQuote(stock.symbol, finnhubApiKey);
+        if (quote) {
+          updatedCount++;
+          const priceGBP = parseFloat((quote.priceUSD * usdToGbp).toFixed(2));
+          const highGBP = parseFloat((quote.high * usdToGbp).toFixed(2));
+          const lowGBP = parseFloat((quote.low * usdToGbp).toFixed(2));
+          const prevCloseGBP = parseFloat((quote.prevClose * usdToGbp).toFixed(2));
+
+          const now = new Date();
+          const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+          return {
+            ...stock,
+            price: priceGBP,
+            change24h: quote.change24h,
+            dayHigh: Math.max(stock.dayHigh, highGBP),
+            dayLow: Math.min(stock.dayLow, lowGBP),
+            previousClose: prevCloseGBP,
+            sparkline: [...stock.sparkline.slice(1), priceGBP],
+            history: [...stock.history.slice(1), { time: timeStr, price: priceGBP }],
+          };
+        }
+      }
+
+      return stock;
+    })
+  );
+
+  return { stocks: updatedStocks, updatedCount, fxRate: usdToGbp };
+}
+
+/**
+ * Simulates real-time live stock price fluctuations (Fallback when market closed or no API key)
+ */
 export function simulateMarketTick(stocks: Stock[]): Stock[] {
   return stocks.map((stock) => {
     const percentChange = (Math.random() * 0.0085) - 0.004;

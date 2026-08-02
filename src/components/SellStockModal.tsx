@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useGame } from '../context/GameContext';
 import type { Holding } from '../types/stock';
 import { X, CheckCircle, AlertTriangle, ArrowRight } from 'lucide-react';
@@ -63,7 +64,7 @@ export const SellStockModal: React.FC<SellStockModalProps> = ({ isOpen, onClose,
     }
   };
 
-  return (
+  return createPortal(
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '580px' }}>
         
@@ -207,6 +208,7 @@ export const SellStockModal: React.FC<SellStockModalProps> = ({ isOpen, onClose,
         </form>
 
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
