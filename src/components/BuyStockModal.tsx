@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useGame } from '../context/GameContext';
 import type { Stock } from '../types/stock';
@@ -11,17 +11,34 @@ interface BuyStockModalProps {
 }
 
 export const BuyStockModal: React.FC<BuyStockModalProps> = ({ isOpen, onClose, initialStock }) => {
-  const { stocks, summary, buyStock } = useGame();
+  const { stocks, summary, buyStock, selectedStock } = useGame();
   
-  const [selectedStockId, setSelectedStockId] = useState<string>(initialStock ? initialStock.id : stocks[0]?.id || 'AAPL');
+  const [selectedStockId, setSelectedStockId] = useState<string>(
+    initialStock ? initialStock.id : (selectedStock ? selectedStock.id : (stocks[0]?.id || 'AAPL'))
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [amountGBP, setAmountGBP] = useState<string>('500');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Synchronize selectedStockId whenever modal is opened or initialStock changes
+  useEffect(() => {
+    if (isOpen) {
+      if (initialStock) {
+        setSelectedStockId(initialStock.id);
+      } else if (selectedStock) {
+        setSelectedStockId(selectedStock.id);
+      } else if (stocks.length > 0) {
+        setSelectedStockId(stocks[0].id);
+      }
+      setErrorMessage(null);
+      setSuccessMessage(null);
+    }
+  }, [isOpen, initialStock, selectedStock, stocks]);
+
   if (!isOpen) return null;
 
-  const currentStock = stocks.find((s) => s.id === selectedStockId) || stocks[0];
+  const currentStock = stocks.find((s) => s.id === selectedStockId) || initialStock || selectedStock || stocks[0];
   const numAmount = parseFloat(amountGBP) || 0;
   
   const calculatedShares = currentStock && currentStock.price > 0 ? numAmount / currentStock.price : 0;
@@ -54,6 +71,11 @@ export const BuyStockModal: React.FC<BuyStockModalProps> = ({ isOpen, onClose, i
     setErrorMessage(null);
     setSuccessMessage(null);
 
+    if (!currentStock) {
+      setErrorMessage('Please select a valid stock');
+      return;
+    }
+
     if (numAmount <= 0) {
       setErrorMessage('Please enter an investment amount greater than £0.00');
       return;
@@ -82,7 +104,7 @@ export const BuyStockModal: React.FC<BuyStockModalProps> = ({ isOpen, onClose, i
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
           <div>
-            <h2 style={{ fontSize: '1.3rem', fontWeight: 800 }}>Invest Cash in Stock</h2>
+            <h2 style={{ fontSize: '1.3rem', fontWeight: 800 }}>Invest Cash in {currentStock?.symbol || 'Stock'}</h2>
             <p style={{ fontSize: '0.825rem', color: 'var(--text-secondary)' }}>
               Select a stock and enter how much money you want to invest.
             </p>
@@ -230,7 +252,7 @@ export const BuyStockModal: React.FC<BuyStockModalProps> = ({ isOpen, onClose, i
               <div>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Cost Per Share</span>
                 <div className="mono" style={{ fontSize: '1.1rem', fontWeight: 700 }}>
-                  £{currentStock.price.toFixed(2)}
+                  £{currentStock?.price.toFixed(2) || '0.00'}
                 </div>
               </div>
 
