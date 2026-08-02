@@ -42,7 +42,7 @@ const MainLayout: React.FC = () => {
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onOpenBuyModal={() => handleOpenBuyModal(null)}
+        onOpenBuyModal={() => handleOpenBuyModal(selectedStock)}
       />
 
       {/* Main Portfolio Summary Cards */}
