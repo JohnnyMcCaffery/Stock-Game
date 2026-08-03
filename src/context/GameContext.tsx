@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { Stock, Holding, Transaction, PortfolioSummary } from '../types/stock';
-import { INITIAL_STOCKS, simulateMarketTick, fetchRealTimeMarketData } from '../services/marketData';
+import { INITIAL_STOCKS, simulateMarketTick, fetchRealTimeMarketData, fetchAndCreateStockBySymbol } from '../services/marketData';
 import packageJson from '../../package.json';
 
 const DEFAULT_STARTING_BALANCE = 5000.00;
@@ -34,12 +34,13 @@ interface GameContextType {
   startingBalance: number;
   setStartingBalance: (bal: number) => void;
   isHardDriveSynced: boolean;
+  addStockToMarket: (newStock: Stock) => void;
+  searchAndAddSymbol: (symbol: string) => Promise<Stock | null>;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
 export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Flag to prevent auto-save from overwriting server data before initial load finishes
   const [isInitialLoadComplete, setIsInitialLoadComplete] = useState<boolean>(false);
 
   // Load saved stock prices & market history from LocalStorage as initial fallback
@@ -192,8 +193,33 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshLiveMarketData = async () => {
     setIsSyncingLiveApi(true);
     try {
-      const res = await fetchRealTimeMarketData(stocks, apiKey);
-      setStocks(res.stocks);
+      // 1. Gather all unique stock IDs from stocks state, INITIAL_STOCKS, and active holdingsMap
+      const currentMap = new Map<string, Stock>();
+      INITIAL_STOCKS.forEach((s) => currentMap.set(s.id.toUpperCase(), s));
+      stocks.forEach((s) => currentMap.set(s.id.toUpperCase(), s));
+
+      Object.keys(holdingsMap).forEach((id) => {
+        const cleanUpper = id.toUpperCase();
+        if (!currentMap.has(cleanUpper)) {
+          const fallback = INITIAL_STOCKS.find((s) => s.id.toUpperCase() === cleanUpper || s.symbol.toUpperCase() === cleanUpper);
+          if (fallback) currentMap.set(cleanUpper, fallback);
+        }
+      });
+
+      const fullList = Array.from(currentMap.values());
+      const res = await fetchRealTimeMarketData(fullList, apiKey);
+
+      setStocks((prev) => {
+        const prevMap = new Map<string, Stock>();
+        prev.forEach((s) => prevMap.set(s.id.toUpperCase(), s));
+
+        res.stocks.forEach((updated) => {
+          prevMap.set(updated.id.toUpperCase(), updated);
+        });
+
+        return Array.from(prevMap.values());
+      });
+
       const now = new Date();
       setLastLiveSyncTime(now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     } catch (err) {
@@ -237,7 +263,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Auto-save full session state to BOTH LocalStorage AND Hard Drive File (/data/savegame.json) ONLY AFTER initial load complete!
   useEffect(() => {
-    if (!isInitialLoadComplete) return; // GATE: Prevent overwriting disk file before initial GET finishes!
+    if (!isInitialLoadComplete) return;
 
     const stateToSave = {
       stocks,
@@ -269,20 +295,60 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   }, [isInitialLoadComplete, stocks, cashBalance, holdingsMap, transactions, apiKey, dataSourceMode, appTitle, customVersion, startingBalance]);
 
+  // Add a newly searched stock directly to the market catalog and save it
+  const addStockToMarket = (newStock: Stock) => {
+    setStocks((prev) => {
+      const exists = prev.some((s) => s.id.toLowerCase() === newStock.id.toLowerCase() || s.symbol.toLowerCase() === newStock.symbol.toLowerCase());
+      if (exists) return prev;
+      return [newStock, ...prev];
+    });
+    setSelectedStock(newStock);
+  };
+
+  // Search and resolve any stock/asset symbol globally, auto-adding it to saved market data
+  const searchAndAddSymbol = async (symbol: string): Promise<Stock | null> => {
+    const cleanSym = symbol.trim().toUpperCase();
+    if (!cleanSym) return null;
+
+    const existing = stocks.find((s) => s.symbol.toUpperCase() === cleanSym || s.id.toUpperCase() === cleanSym);
+    if (existing) {
+      setSelectedStock(existing);
+      return existing;
+    }
+
+    const fetchedStock = await fetchAndCreateStockBySymbol(cleanSym, apiKey);
+    if (fetchedStock) {
+      addStockToMarket(fetchedStock);
+      return fetchedStock;
+    }
+
+    return null;
+  };
+
   // Compute active holdings list and metrics
   const holdings: Holding[] = Object.entries(holdingsMap)
     .filter(([_, data]) => data.sharesOwned > 0.00001 || data.realisedPL !== 0)
     .map(([stockId, data]) => {
-      const stock = stocks.find((s) => s.id === stockId);
+      const cleanId = stockId.trim().toLowerCase();
+      let stock = stocks.find(
+        (s) => s.id.toLowerCase() === cleanId || s.symbol.toLowerCase() === cleanId || s.name.toLowerCase() === cleanId
+      );
+
+      if (!stock) {
+        stock = INITIAL_STOCKS.find(
+          (s) => s.id.toLowerCase() === cleanId || s.symbol.toLowerCase() === cleanId || s.name.toLowerCase() === cleanId
+        );
+      }
+
       const symbol = stock ? stock.symbol : stockId;
       const name = stock ? stock.name : stockId;
-      const currentPrice = stock ? stock.price : 0;
+      const currentPrice = stock && stock.price > 0 ? stock.price : (data.averageCost > 0 ? data.averageCost : 0);
       const currentValue = data.sharesOwned * currentPrice;
       const unrealisedPL = currentValue - data.totalCost;
       const unrealisedPLPercent = data.totalCost > 0 ? (unrealisedPL / data.totalCost) * 100 : 0;
 
       return {
-        stockId,
+        stockId: stock ? stock.id : stockId,
         symbol,
         name,
         sharesOwned: data.sharesOwned,
@@ -322,24 +388,43 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: `Insufficient cash available (£${cashBalance.toFixed(2)} available)` };
     }
 
-    const stock = stocks.find((s) => s.id === stockId);
+    const cleanId = (stockId || '').trim().toLowerCase();
+    let stock = stocks.find(
+      (s) => s.id.toLowerCase() === cleanId || s.symbol.toLowerCase() === cleanId || s.name.toLowerCase() === cleanId
+    );
+
+    if (!stock) {
+      stock = INITIAL_STOCKS.find(
+        (s) => s.id.toLowerCase() === cleanId || s.symbol.toLowerCase() === cleanId || s.name.toLowerCase() === cleanId
+      );
+      if (stock) {
+        addStockToMarket(stock);
+      }
+    }
+
+    if (!stock && selectedStock && (selectedStock.id.toLowerCase() === cleanId || selectedStock.symbol.toLowerCase() === cleanId)) {
+      stock = selectedStock;
+      addStockToMarket(selectedStock);
+    }
+
     if (!stock) {
       return { success: false, message: 'Stock not found' };
     }
 
     const price = stock.price;
+    const targetStockId = stock.id;
     const sharesToBuy = amountGBP / price;
     const newCash = cashBalance - amountGBP;
 
     setHoldingsMap((prev) => {
-      const existing = prev[stockId] || { sharesOwned: 0, totalCost: 0, averageCost: 0, realisedPL: 0 };
+      const existing = prev[targetStockId] || { sharesOwned: 0, totalCost: 0, averageCost: 0, realisedPL: 0 };
       const newShares = existing.sharesOwned + sharesToBuy;
       const newCost = existing.totalCost + amountGBP;
       const newAvgCost = newCost / newShares;
 
       return {
         ...prev,
-        [stockId]: {
+        [targetStockId]: {
           sharesOwned: newShares,
           totalCost: newCost,
           averageCost: newAvgCost,
@@ -375,18 +460,42 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Sell Stock Logic
   const sellStock = (stockId: string, sharesToSell: number): { success: boolean; message: string } => {
-    const existing = holdingsMap[stockId];
+    const cleanId = (stockId || '').trim().toLowerCase();
+
+    // 1. Try finding stock in stocks state array
+    let stock = stocks.find(
+      (s) => s.id.toLowerCase() === cleanId || s.symbol.toLowerCase() === cleanId || s.name.toLowerCase() === cleanId
+    );
+
+    // 2. Fallback to INITIAL_STOCKS if missing
+    if (!stock) {
+      stock = INITIAL_STOCKS.find(
+        (s) => s.id.toLowerCase() === cleanId || s.symbol.toLowerCase() === cleanId || s.name.toLowerCase() === cleanId
+      );
+      if (stock) {
+        addStockToMarket(stock);
+      }
+    }
+
+    const targetStockId = stock ? stock.id : stockId;
+
+    // 3. Find exact key in holdingsMap
+    const holdingKey = Object.keys(holdingsMap).find(
+      (k) => k.toLowerCase() === cleanId || (stock && k.toLowerCase() === stock.id.toLowerCase()) || (stock && k.toLowerCase() === stock.symbol.toLowerCase())
+    ) || targetStockId;
+
+    const existing = holdingsMap[holdingKey] || holdingsMap[targetStockId] || holdingsMap[stockId];
     if (!existing || existing.sharesOwned <= 0) {
       return { success: false, message: 'You do not own any shares of this stock' };
     }
 
-    if (sharesToSell <= 0 || sharesToSell > existing.sharesOwned + 0.000001) {
+    if (sharesToSell <= 0 || sharesToSell > existing.sharesOwned + 0.001) {
       return { success: false, message: `Invalid share quantity. You own ${existing.sharesOwned.toFixed(4)} shares.` };
     }
 
-    const actualSharesToSell = Math.min(sharesToSell, existing.sharesOwned);
-    const stock = stocks.find((s) => s.id === stockId);
-    const price = stock ? stock.price : 0;
+    const isFullSale = Math.abs(sharesToSell - existing.sharesOwned) < 0.001 || sharesToSell >= existing.sharesOwned;
+    const actualSharesToSell = isFullSale ? existing.sharesOwned : Math.min(sharesToSell, existing.sharesOwned);
+    const price = stock && stock.price > 0 ? stock.price : (existing.averageCost > 0 ? existing.averageCost : 0);
     const saleRevenue = actualSharesToSell * price;
 
     // Realised P/L for sold shares
@@ -396,13 +505,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const newCash = cashBalance + saleRevenue;
 
     setHoldingsMap((prev) => {
-      const item = prev[stockId];
-      const remainingShares = Math.max(0, item.sharesOwned - actualSharesToSell);
+      const item = prev[holdingKey] || prev[targetStockId] || prev[stockId];
+      const remainingShares = isFullSale ? 0 : Math.max(0, item.sharesOwned - actualSharesToSell);
       const remainingCost = remainingShares * item.averageCost;
 
       return {
         ...prev,
-        [stockId]: {
+        [holdingKey]: {
           sharesOwned: remainingShares,
           totalCost: remainingCost,
           averageCost: remainingShares > 0 ? item.averageCost : 0,
@@ -419,9 +528,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       timestamp: now.toISOString(),
       formattedDate: now.toLocaleDateString('en-GB') + ' ' + now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       type: 'SELL',
-      stockId,
-      symbol: stock ? stock.symbol : stockId,
-      name: stock ? stock.name : stockId,
+      stockId: targetStockId,
+      symbol: stock ? stock.symbol : targetStockId,
+      name: stock ? stock.name : targetStockId,
       shares: actualSharesToSell,
       price: price,
       totalValue: saleRevenue,
@@ -517,6 +626,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         startingBalance,
         setStartingBalance: setStartingBalanceState,
         isHardDriveSynced,
+        addStockToMarket,
+        searchAndAddSymbol,
       }}
     >
       {children}

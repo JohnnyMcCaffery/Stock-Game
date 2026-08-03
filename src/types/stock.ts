@@ -1,4 +1,14 @@
-export type StockCategory = 'Tech' | 'UK FTSE 100' | 'Finance' | 'Energy' | 'Crypto' | 'Healthcare';
+export type StockCategory =
+  | 'Tech'
+  | 'UK FTSE 100'
+  | 'Finance'
+  | 'Energy'
+  | 'Crypto'
+  | 'Healthcare'
+  | 'Indices'
+  | 'Commodities'
+  | 'Forex'
+  | 'Global';
 
 export interface StockHistoryPoint {
   time: string;
