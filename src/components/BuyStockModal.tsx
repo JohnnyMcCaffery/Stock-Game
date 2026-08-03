@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useGame } from '../context/GameContext';
 import type { Stock } from '../types/stock';
-import { X, Search, CheckCircle, AlertTriangle, ArrowRight } from 'lucide-react';
+import { searchMatchingFinancialDictionary } from '../services/marketData';
+import { X, Search, CheckCircle, AlertTriangle, ArrowRight, PlusCircle, Loader } from 'lucide-react';
 
 interface BuyStockModalProps {
   isOpen: boolean;
@@ -11,7 +12,7 @@ interface BuyStockModalProps {
 }
 
 export const BuyStockModal: React.FC<BuyStockModalProps> = ({ isOpen, onClose, initialStock }) => {
-  const { stocks, summary, buyStock, selectedStock } = useGame();
+  const { stocks, summary, buyStock, selectedStock, searchAndAddSymbol, addStockToMarket } = useGame();
   
   const [selectedStockId, setSelectedStockId] = useState<string>(
     initialStock ? initialStock.id : (selectedStock ? selectedStock.id : (stocks[0]?.id || 'AAPL'))
@@ -20,6 +21,7 @@ export const BuyStockModal: React.FC<BuyStockModalProps> = ({ isOpen, onClose, i
   const [amountGBP, setAmountGBP] = useState<string>('500');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isSearchingSymbol, setIsSearchingSymbol] = useState(false);
 
   // Synchronize selectedStockId whenever modal is opened or initialStock changes
   useEffect(() => {
@@ -33,24 +35,57 @@ export const BuyStockModal: React.FC<BuyStockModalProps> = ({ isOpen, onClose, i
       }
       setErrorMessage(null);
       setSuccessMessage(null);
+      setSearchQuery('');
     }
   }, [isOpen, initialStock, selectedStock, stocks]);
 
   if (!isOpen) return null;
 
-  const currentStock = stocks.find((s) => s.id === selectedStockId) || initialStock || selectedStock || stocks[0];
+  const currentStock =
+    stocks.find((s) => s.id === selectedStockId || s.symbol === selectedStockId) ||
+    (selectedStock && (selectedStock.id === selectedStockId || selectedStock.symbol === selectedStockId) ? selectedStock : null) ||
+    initialStock ||
+    selectedStock ||
+    stocks[0];
+
   const numAmount = parseFloat(amountGBP) || 0;
   
   const calculatedShares = currentStock && currentStock.price > 0 ? numAmount / currentStock.price : 0;
   const remainingCash = summary.cashBalance - numAmount;
   const isValidAmount = numAmount > 0 && numAmount <= summary.cashBalance;
 
-  const filteredStocks = stocks.filter(
+  const dictionaryPreviews = searchQuery.trim().length >= 2 ? searchMatchingFinancialDictionary(searchQuery, stocks) : [];
+
+  const savedMatches = stocks.filter(
     (s) =>
       s.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
       s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       s.category.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const filteredStocks = [...savedMatches, ...dictionaryPreviews];
+
+  const handleSearchAndAdd = async () => {
+    if (!searchQuery.trim()) return;
+    setIsSearchingSymbol(true);
+    setErrorMessage(null);
+
+    try {
+      const added = await searchAndAddSymbol(searchQuery);
+      if (added) {
+        setSelectedStockId(added.id);
+        setSearchQuery('');
+        setSuccessMessage(`Added ${added.symbol} (${added.name}) to market!`);
+        setTimeout(() => setSuccessMessage(null), 2500);
+      } else {
+        setErrorMessage(`Could not resolve ticker "${searchQuery}". Please check ticker or company name.`);
+      }
+    } catch (err) {
+      setErrorMessage('Failed to resolve symbol.');
+    } finally {
+      setIsSearchingSymbol(false);
+    }
+  };
 
   const handleQuickAmount = (val: number | 'max' | 'half' | 'quarter') => {
     setErrorMessage(null);
@@ -106,7 +141,7 @@ export const BuyStockModal: React.FC<BuyStockModalProps> = ({ isOpen, onClose, i
           <div>
             <h2 style={{ fontSize: '1.3rem', fontWeight: 800 }}>Invest Cash in {currentStock?.symbol || 'Stock'}</h2>
             <p style={{ fontSize: '0.825rem', color: 'var(--text-secondary)' }}>
-              Select a stock and enter how much money you want to invest.
+              Select an asset or search any global symbol to add it live.
             </p>
           </div>
           <button
@@ -120,19 +155,40 @@ export const BuyStockModal: React.FC<BuyStockModalProps> = ({ isOpen, onClose, i
         {/* Stock Selector Search */}
         <div style={{ marginBottom: '1.25rem' }}>
           <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>
-            SELECT STOCK TO BUY
+            SELECT OR SEARCH ASSET TO BUY
           </label>
           
-          <div style={{ position: 'relative', marginBottom: '0.6rem' }}>
-            <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-            <input
-              type="text"
-              placeholder="Search ticker or company name (e.g. AAPL, NVDA, Shell)..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="form-input"
-              style={{ paddingLeft: '2.4rem', fontSize: '0.9rem' }}
-            />
+          <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.6rem' }}>
+            <div style={{ position: 'relative', flex: 1 }}>
+              <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                placeholder="Search ticker (e.g. AAPL, NVDA, Gold, S&P 500, SOL)..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && filteredStocks.length === 0) {
+                    e.preventDefault();
+                    handleSearchAndAdd();
+                  }
+                }}
+                className="form-input"
+                style={{ paddingLeft: '2.4rem', fontSize: '0.9rem' }}
+              />
+            </div>
+
+            {searchQuery && filteredStocks.length === 0 && (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleSearchAndAdd}
+                disabled={isSearchingSymbol}
+                style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem', whiteSpace: 'nowrap' }}
+              >
+                {isSearchingSymbol ? <Loader size={14} className="animate-spin" /> : <PlusCircle size={14} />}
+                Add "{searchQuery.toUpperCase()}"
+              </button>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', paddingBottom: '0.4rem', scrollbarWidth: 'none' }}>
@@ -141,6 +197,7 @@ export const BuyStockModal: React.FC<BuyStockModalProps> = ({ isOpen, onClose, i
                 key={s.id}
                 type="button"
                 onClick={() => {
+                  addStockToMarket(s);
                   setSelectedStockId(s.id);
                   setErrorMessage(null);
                 }}

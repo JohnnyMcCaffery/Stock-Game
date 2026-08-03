@@ -55,6 +55,90 @@ function localDatabasePlugin(): Plugin {
 
         next();
       });
+
+      // Live Market Price Proxy Endpoint (/api/quote?symbol=...)
+      server.middlewares.use('/api/quote', async (req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        try {
+          const urlObj = new URL(req.url || '', 'http://localhost');
+          const rawSymbol = urlObj.searchParams.get('symbol') || '';
+          if (!rawSymbol) {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ error: 'Missing symbol query parameter' }));
+            return;
+          }
+
+          const cleanUpper = rawSymbol.trim().toUpperCase();
+          const symbolMap: Record<string, string> = {
+            'INTEL': 'INTC',
+            'S&P 500': 'SPY',
+            'S&P': 'SPY',
+            'SP500': 'SPY',
+            'GSPC': 'SPY',
+            'NASDAQ 100': 'QQQ',
+            'NASDAQ': 'QQQ',
+            'IXIC': 'QQQ',
+            'DOW JONES': 'DIA',
+            'DOW': 'DIA',
+            'DJI': 'DIA',
+            'GOLD': 'GLD',
+            'GOLD SPOT': 'GLD',
+            'XAU-USD': 'GLD',
+            'SILVER': 'SLV',
+            'SILVER SPOT': 'SLV',
+            'XAG-USD': 'SLV',
+            'CRUDE OIL': 'USO',
+            'OIL': 'USO',
+            'WTI': 'USO',
+            'OIL-WTI': 'USO',
+            'BRENT': 'BNO',
+            'BRENT OIL': 'BNO',
+            'NATURAL GAS': 'UNG',
+            'NAT GAS': 'UNG',
+            'NAT-GAS': 'UNG',
+            'COPPER': 'CPER',
+            'PLATINUM': 'PPLT',
+          };
+
+          const targetTicker = symbolMap[cleanUpper] || cleanUpper;
+          const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(targetTicker)}?interval=1d&range=1d`;
+
+          const response = await fetch(yahooUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+          });
+
+          if (response.ok) {
+            const data: any = await response.json();
+            const meta = data?.chart?.result?.[0]?.meta;
+            if (meta && typeof meta.regularMarketPrice === 'number') {
+              const priceUSD = meta.regularMarketPrice;
+              const prevCloseUSD = meta.chartPreviousClose || meta.previousClose || priceUSD;
+              const change24h = prevCloseUSD > 0 ? parseFloat((((priceUSD - prevCloseUSD) / prevCloseUSD) * 100).toFixed(2)) : 0;
+              const highUSD = meta.regularMarketDayHigh || Math.max(priceUSD, prevCloseUSD);
+              const lowUSD = meta.regularMarketDayLow || Math.min(priceUSD, prevCloseUSD);
+
+              res.end(JSON.stringify({
+                success: true,
+                symbol: targetTicker,
+                priceUSD,
+                prevCloseUSD,
+                highUSD,
+                lowUSD,
+                change24h,
+                currency: meta.currency || 'USD'
+              }));
+              return;
+            }
+          }
+          res.statusCode = 404;
+          res.end(JSON.stringify({ error: `No price quote found for ${rawSymbol}` }));
+        } catch (err) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: 'Failed to fetch live market quote' }));
+        }
+      });
     }
   };
 }

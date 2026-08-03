@@ -17,10 +17,19 @@ export const SellStockModal: React.FC<SellStockModalProps> = ({ isOpen, onClose,
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Pre-populate sharesInput with 100% owned shares when modal opens or holding changes
+  React.useEffect(() => {
+    if (isOpen && holding) {
+      setSharesInput(holding.sharesOwned.toString());
+      setErrorMessage(null);
+      setSuccessMessage(null);
+    }
+  }, [isOpen, holding]);
+
   if (!isOpen || !holding) return null;
 
   const numShares = parseFloat(sharesInput) || 0;
-  const isSharesValid = numShares > 0 && numShares <= holding.sharesOwned + 0.000001;
+  const isSharesValid = numShares > 0 && numShares <= holding.sharesOwned + 0.001;
 
   const currentPrice = holding.currentPrice;
   const saleRevenue = numShares * currentPrice;
@@ -33,8 +42,12 @@ export const SellStockModal: React.FC<SellStockModalProps> = ({ isOpen, onClose,
   const handlePercentageSelect = (pct: number) => {
     setErrorMessage(null);
     setSuccessMessage(null);
-    const shares = (holding.sharesOwned * (pct / 100));
-    setSharesInput(shares.toFixed(4));
+    if (pct === 100) {
+      setSharesInput(holding.sharesOwned.toString());
+    } else {
+      const shares = (holding.sharesOwned * (pct / 100));
+      setSharesInput(shares.toFixed(4));
+    }
   };
 
   const handleSell = (e: React.FormEvent) => {
@@ -47,12 +60,15 @@ export const SellStockModal: React.FC<SellStockModalProps> = ({ isOpen, onClose,
       return;
     }
 
-    if (numShares > holding.sharesOwned + 0.000001) {
+    if (numShares > holding.sharesOwned + 0.001) {
       setErrorMessage(`You cannot sell more than your owned ${holding.sharesOwned.toFixed(4)} shares.`);
       return;
     }
 
-    const res = sellStock(holding.stockId, numShares);
+    // Pass exact sharesOwned if close to 100% to avoid float rounding discrepancies
+    const sharesToSubmit = Math.abs(numShares - holding.sharesOwned) < 0.001 ? holding.sharesOwned : numShares;
+
+    const res = sellStock(holding.stockId, sharesToSubmit);
     if (res.success) {
       setSuccessMessage(res.message);
       setTimeout(() => {
