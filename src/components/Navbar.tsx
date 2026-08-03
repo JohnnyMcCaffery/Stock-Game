@@ -125,7 +125,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenB
           {/* Sync Live Prices Manual Button */}
           <button
             className="btn-secondary"
-            onClick={refreshLiveMarketData}
+            onClick={() => refreshLiveMarketData(true)}
             disabled={isSyncingLiveApi}
             title="Refresh Live Market Data"
             style={{ padding: '0.6rem 0.8rem' }}

@@ -21,7 +21,7 @@ app.get('/api/state', (req, res) => {
     try {
       const data = fs.readFileSync(saveFilePath, 'utf-8');
       return res.json(JSON.parse(data));
-    } catch (err) {
+    } catch {
       return res.status(500).json({ error: 'Failed to read savegame file' });
     }
   }
@@ -36,7 +36,7 @@ app.post('/api/state', (req, res) => {
     }
     fs.writeFileSync(saveFilePath, JSON.stringify(req.body, null, 2), 'utf-8');
     return res.json({ success: true, timestamp: new Date().toISOString() });
-  } catch (err) {
+  } catch {
     return res.status(500).json({ error: 'Failed to write savegame file to disk' });
   }
 });
@@ -50,6 +50,9 @@ app.delete('/api/state', (req, res) => {
 });
 
 // Live Market Price Proxy Endpoint (/api/quote?symbol=...)
+const quoteCache = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache
+
 app.get('/api/quote', async (req, res) => {
   try {
     const rawSymbol = (req.query.symbol || '').toString();
@@ -90,6 +93,14 @@ app.get('/api/quote', async (req, res) => {
     };
 
     const targetTicker = symbolMap[cleanUpper] || cleanUpper;
+
+    // Check in-memory cache first to avoid rate limiting
+    const now = Date.now();
+    const cached = quoteCache.get(targetTicker);
+    if (cached && (now - cached.timestamp < CACHE_TTL_MS)) {
+      return res.json(cached.data);
+    }
+
     const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(targetTicker)}?interval=1d&range=1d`;
 
     const response = await fetch(yahooUrl, {
@@ -108,7 +119,7 @@ app.get('/api/quote', async (req, res) => {
         const highUSD = meta.regularMarketDayHigh || Math.max(priceUSD, prevCloseUSD);
         const lowUSD = meta.regularMarketDayLow || Math.min(priceUSD, prevCloseUSD);
 
-        return res.json({
+        const payload = {
           success: true,
           symbol: targetTicker,
           priceUSD,
@@ -117,12 +128,15 @@ app.get('/api/quote', async (req, res) => {
           lowUSD,
           change24h,
           currency: meta.currency || 'USD'
-        });
+        };
+
+        quoteCache.set(targetTicker, { timestamp: now, data: payload });
+        return res.json(payload);
       }
     }
     return res.status(404).json({ error: `No price quote found for ${rawSymbol}` });
   } catch (err) {
-    return res.status(500).json({ error: 'Failed to fetch live market quote' });
+    return res.status(500).json({ error: 'Failed to fetch live market quote', details: err?.message });
   }
 });
 

@@ -80,7 +80,7 @@ export const BuyStockModal: React.FC<BuyStockModalProps> = ({ isOpen, onClose, i
       } else {
         setErrorMessage(`Could not resolve ticker "${searchQuery}". Please check ticker or company name.`);
       }
-    } catch (err) {
+    } catch {
       setErrorMessage('Failed to resolve symbol.');
     } finally {
       setIsSearchingSymbol(false);

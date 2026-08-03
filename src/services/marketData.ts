@@ -841,3 +841,27 @@ export function simulateMarketTick(stocks: Stock[]): Stock[] {
     };
   });
 }
+
+/**
+ * Helper to check if traditional stock markets (US NYSE/NASDAQ & UK LSE) are currently open.
+ * US: Mon-Fri 14:30 to 21:00 UTC (9:30 AM - 4:00 PM EST)
+ * UK: Mon-Fri 08:00 to 16:30 UTC
+ */
+export function isStockMarketOpen(): boolean {
+  const now = new Date();
+  const day = now.getUTCDay(); // 0 = Sunday, 6 = Saturday
+  if (day === 0 || day === 6) {
+    return false; // Weekend - stock markets closed
+  }
+
+  const hour = now.getUTCHours();
+  const minute = now.getUTCMinutes();
+  const totalMinutes = hour * 60 + minute;
+
+  // US market: 14:30 UTC (870 min) to 21:00 UTC (1260 min)
+  const isUSOpen = totalMinutes >= 870 && totalMinutes <= 1260;
+  // UK market: 08:00 UTC (480 min) to 16:30 UTC (990 min)
+  const isUKOpen = totalMinutes >= 480 && totalMinutes <= 990;
+
+  return isUSOpen || isUKOpen;
+}

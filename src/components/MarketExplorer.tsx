@@ -64,7 +64,7 @@ export const MarketExplorer: React.FC<MarketExplorerProps> = ({ onSelectStock, o
         setSearchStatusMsg(`Could not resolve symbol "${search}". Please check ticker or company name.`);
         setTimeout(() => setSearchStatusMsg(null), 3500);
       }
-    } catch (err) {
+    } catch {
       setSearchStatusMsg('Failed to fetch symbol data.');
     } finally {
       setIsSearchingSymbol(false);
