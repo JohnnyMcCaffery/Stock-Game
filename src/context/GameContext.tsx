@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { Stock, Holding, Transaction, PortfolioSummary } from '../types/stock';
-import { INITIAL_STOCKS, simulateMarketTick, fetchRealTimeMarketData, fetchAndCreateStockBySymbol } from '../services/marketData';
+import { INITIAL_STOCKS, simulateMarketTick, fetchRealTimeMarketData, fetchAndCreateStockBySymbol, isStockMarketOpen } from '../services/marketData';
 import packageJson from '../../package.json';
 
 const DEFAULT_STARTING_BALANCE = 5000.00;
@@ -24,7 +24,7 @@ interface GameContextType {
   setApiKey: (key: string) => void;
   dataSourceMode: 'LIVE_API' | 'SIMULATED';
   setDataSourceMode: (mode: 'LIVE_API' | 'SIMULATED') => void;
-  refreshLiveMarketData: () => Promise<void>;
+  refreshLiveMarketData: (force?: boolean) => Promise<void>;
   isSyncingLiveApi: boolean;
   lastLiveSyncTime: string | null;
   appTitle: string;
@@ -52,7 +52,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (Array.isArray(parsed.stocks) && parsed.stocks.length > 0) {
           return parsed.stocks;
         }
-      } catch (e) {}
+      } catch {}
     }
     return INITIAL_STOCKS;
   });
@@ -63,7 +63,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (typeof parsed.appTitle === 'string') return parsed.appTitle;
-      } catch (e) {}
+      } catch {}
     }
     return 'STOCKS GAME';
   });
@@ -74,7 +74,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (typeof parsed.customVersion === 'string') return parsed.customVersion;
-      } catch (e) {}
+      } catch {}
     }
     return null;
   });
@@ -91,7 +91,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (typeof parsed.startingBalance === 'number' && parsed.startingBalance > 0) return parsed.startingBalance;
-      } catch (e) {}
+      } catch {}
     }
     return DEFAULT_STARTING_BALANCE;
   });
@@ -102,7 +102,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (typeof parsed.cashBalance === 'number') return parsed.cashBalance;
-      } catch (e) {}
+      } catch {}
     }
     return startingBalance;
   });
@@ -113,7 +113,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (parsed.holdingsMap) return parsed.holdingsMap;
-      } catch (e) {}
+      } catch {}
     }
     return {};
   });
@@ -124,7 +124,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed.transactions)) return parsed.transactions;
-      } catch (e) {}
+      } catch {}
     }
     return [];
   });
@@ -138,7 +138,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (typeof parsed.apiKey === 'string') return parsed.apiKey;
-      } catch (e) {}
+      } catch {}
     }
     return '';
   });
@@ -149,7 +149,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (parsed.dataSourceMode === 'LIVE_API' || parsed.dataSourceMode === 'SIMULATED') return parsed.dataSourceMode;
-      } catch (e) {}
+      } catch {}
     }
     return 'LIVE_API';
   });
@@ -158,6 +158,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLiveMarketActive, setIsLiveMarketActive] = useState<boolean>(true);
   const [isSyncingLiveApi, setIsSyncingLiveApi] = useState<boolean>(false);
   const [lastLiveSyncTime, setLastLiveSyncTime] = useState<string | null>(null);
+  const [lastSyncTimestamp, setLastSyncTimestamp] = useState<number | null>(null);
   const [isHardDriveSynced, setIsHardDriveSynced] = useState<boolean>(false);
 
   // Load saved state from Hard Drive File (/api/state -> data/savegame.json) FIRST before enabling auto-save
@@ -178,6 +179,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (diskData.appTitle) setAppTitleState(diskData.appTitle);
             if (typeof diskData.startingBalance === 'number') setStartingBalanceState(diskData.startingBalance);
             if (diskData.customVersion) setCustomVersion(diskData.customVersion);
+            if (typeof diskData.lastSyncTimestamp === 'number') setLastSyncTimestamp(diskData.lastSyncTimestamp);
+            if (typeof diskData.lastLiveSyncTime === 'string') setLastLiveSyncTime(diskData.lastLiveSyncTime);
           }
         }
       } catch (err) {
@@ -190,7 +193,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   // Live market price sync function
-  const refreshLiveMarketData = async () => {
+  const refreshLiveMarketData = useCallback(async (force: boolean = false) => {
+    // If market is closed AND not a forced search/manual call, skip auto-refreshing stock APIs
+    if (!force && !isStockMarketOpen()) {
+      return;
+    }
+
     setIsSyncingLiveApi(true);
     try {
       // 1. Gather all unique stock IDs from stocks state, INITIAL_STOCKS, and active holdingsMap
@@ -220,19 +228,33 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return Array.from(prevMap.values());
       });
 
-      const now = new Date();
-      setLastLiveSyncTime(now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      const nowMs = Date.now();
+      setLastSyncTimestamp(nowMs);
+      setLastLiveSyncTime(new Date(nowMs).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     } catch (err) {
       console.error('Failed live API refresh', err);
     } finally {
       setIsSyncingLiveApi(false);
     }
-  };
+  }, [stocks, holdingsMap, apiKey]);
 
-  // Fetch live market prices on initial session boot
+  // Smart Session Boot Cache: Skip fetching quotes if page is reloaded within 1 hour of the last sync
   useEffect(() => {
-    refreshLiveMarketData();
-  }, []);
+    if (!isInitialLoadComplete) return;
+
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+    const timeSinceLastSync = lastSyncTimestamp ? (Date.now() - lastSyncTimestamp) : Number.MAX_SAFE_INTEGER;
+
+    if (timeSinceLastSync < ONE_HOUR_MS) {
+      const minsAgo = Math.round(timeSinceLastSync / 60000);
+      console.log(`Page reloaded within 1 hour of last sync (${minsAgo}m ago). Using saved market data.`);
+      return;
+    }
+
+    if (dataSourceMode === 'LIVE_API' && isStockMarketOpen()) {
+      refreshLiveMarketData(true);
+    }
+  }, [isInitialLoadComplete, lastSyncTimestamp, dataSourceMode, refreshLiveMarketData]);
 
   // Polling interval for market data
   useEffect(() => {
@@ -240,8 +262,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (dataSourceMode === 'LIVE_API') {
       const interval = setInterval(() => {
-        refreshLiveMarketData();
-      }, 15000); // Fetch live API every 15 seconds
+        if (isStockMarketOpen()) {
+          refreshLiveMarketData();
+        }
+      }, 3600000); // Hourly polling interval (1 hour = 3,600,000ms)
       return () => clearInterval(interval);
     } else {
       const interval = setInterval(() => {
@@ -249,7 +273,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }, 2500); // Ticker simulation every 2.5 seconds
       return () => clearInterval(interval);
     }
-  }, [isLiveMarketActive, dataSourceMode, apiKey]);
+  }, [isLiveMarketActive, dataSourceMode, apiKey, refreshLiveMarketData]);
 
   // Keep selectedStock state updated with new live prices
   useEffect(() => {
@@ -275,6 +299,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       appTitle,
       customVersion,
       startingBalance,
+      lastSyncTimestamp,
+      lastLiveSyncTime,
       savedAt: new Date().toISOString(),
     };
 
@@ -293,7 +319,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .then(() => setIsHardDriveSynced(true))
       .catch((err) => console.warn('Hard drive save backup failed', err));
 
-  }, [isInitialLoadComplete, stocks, cashBalance, holdingsMap, transactions, apiKey, dataSourceMode, appTitle, customVersion, startingBalance]);
+  }, [isInitialLoadComplete, stocks, cashBalance, holdingsMap, transactions, apiKey, dataSourceMode, appTitle, customVersion, startingBalance, lastSyncTimestamp, lastLiveSyncTime]);
 
   // Add a newly searched stock directly to the market catalog and save it
   const addStockToMarket = (newStock: Stock) => {
@@ -635,6 +661,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 };
 
+// oxlint-disable-next-line react/only-export-components
 export const useGame = () => {
   const context = useContext(GameContext);
   if (!context) {

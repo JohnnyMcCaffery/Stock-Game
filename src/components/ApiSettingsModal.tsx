@@ -46,7 +46,7 @@ export const ApiSettingsModal: React.FC<ApiSettingsModalProps> = ({ isOpen, onCl
 
     setDataSourceMode(dataSourceMode);
     setSaveSuccess(true);
-    refreshLiveMarketData();
+    refreshLiveMarketData(true);
 
     setTimeout(() => {
       setSaveSuccess(false);
@@ -279,7 +279,7 @@ export const ApiSettingsModal: React.FC<ApiSettingsModalProps> = ({ isOpen, onCl
             <button
               type="button"
               className="btn-secondary"
-              onClick={refreshLiveMarketData}
+              onClick={() => refreshLiveMarketData(true)}
               disabled={isSyncingLiveApi}
               style={{ fontSize: '0.8rem', padding: '0.5rem 0.8rem' }}
             >
